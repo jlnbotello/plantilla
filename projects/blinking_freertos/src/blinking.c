@@ -55,6 +55,7 @@
 #include "task.h"
 #include "unt.h"
 #include "soc.h"
+#include "led.h"
 
 /* === Definicion y Macros ================================================= */
 
@@ -77,9 +78,9 @@ void Blinking(void * parametros);
 
 void Blinking(void * parametros) {
    while(1) {
-      Escribir_Segmentos(0x40, 3);
+      Led_On(GREEN_LED);
       vTaskDelay(500 / portTICK_PERIOD_MS);
-      Escribir_Segmentos(0x00, 3);
+      Led_Off(GREEN_LED);
       vTaskDelay(500 / portTICK_PERIOD_MS);
    }
 }
@@ -94,15 +95,17 @@ void Blinking(void * parametros) {
  */
 int main(void) {
    /* Inicializaciones y configuraciones de dispositivos */
-   SisTick_Init();
-   Init_PonchoUNT();
+
+   Init_Leds();
 
    /* Creación de las tareas */
    xTaskCreate(Blinking, "Azul", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
-
+   /* Arranque del systick*/
+   SisTick_Init();
    /* Arranque del sistema operativo */
    vTaskStartScheduler();
-   
+
+
    /* vTaskStartScheduler solo retorna si se detiene el sistema operativo */
    while(1);
 
