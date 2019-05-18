@@ -29,3 +29,11 @@ Temporary Items
 *.bin
 *.ipch
 **/out/**
+
+\.cproject
+
+\.project
+
+*.mk
+
+\.settings/language\.settings\.xml
