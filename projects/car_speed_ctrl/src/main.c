@@ -73,7 +73,7 @@
 #define PIN_INT_1 1
 #define TIMER0 0
 //#define NUMERO_INSTRUCCIONES 	10
-#define K 						1
+#define K 						0.
 
 #define EV_REACHED_R			(1<<0)
 #define EV_REACHED_L 			(1<<1)
@@ -154,10 +154,10 @@ uint8_t pwmBiasLUT[] = {
 
 
 #define TURN_SPEED 20
-#define LINEAR_SPEED 70
+#define LINEAR_SPEED 20
 
 instruction_t instructionList[]={
-	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
+	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=5000	, .angle=0},
 	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
 	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
 	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
@@ -355,37 +355,53 @@ void Director(void *parametros){
 	}
 }
 
+#define kP 0.01
+#define kI 0.030
+#define kD 0.005
+
 void WheelSpeedControl(void * parametros){
 	wheel_t * wheel = parametros;
-	float cur_spd,last1,last2,last3 = 0;
-	uint8_t iLUT,pwm,bias;
+	float current_speed=0,average_speed=0,pwm=0, target_speed=0,error=0,last_error=0,integral=0,derivative=0,last1=0,last2=0,last3 = 0;
+	//uint8_t iLUT,bias;
 	EventBits_t evBits;
+	uint8_t data;
 	while(1){
-
+		taskENTER_CRITICAL();
 		xEventGroupWaitBits( carEvents,FLAG_CAR_RUNNING, pdFALSE, pdFALSE, portMAX_DELAY);
 
-		if(wheel->speed > 0 && wheel->speed < 100){
-			iLUT = (uint8_t) wheel->speed/10;
-			bias  = pwmBiasLUT [iLUT];
-			//average
-			last3 = last2;
-			last2 = last1;
-			last1 = EncoderGetSpeed(wheel->encoder);
-			cur_spd = (last1 + last2 + last3)/3;
+		target_speed = (float) wheel->speed;
+		current_speed = EncoderGetSpeed(wheel->encoder);
 
-			pwm = (uint8_t) (bias + ((float)(K*(wheel->speed-cur_spd))));
+		average_speed = (current_speed + last1 + last2 + last3)/4;
+		last3 = last2;
+		last2 = last1;
+		last1 = current_speed;
 
-			if(pwm>100){
-				pwm = 100;
-			}else if(pwm<0){
-				pwm = 0;
-			}
-			MotorSet(wheel->motor,pwm,wheel->direction);
+		//error =  target_speed - current_speed;
+		error =  target_speed - average_speed;
+		integral = error + integral;
+		derivative = error - last_error;
 
-		}else{
-			MotorRst(wheel->motor);
+		last_error = error;
 
+		pwm = kP*error + kI*integral + kD*derivative;
+
+		if(pwm>100){
+			pwm = 100;
+		}else if(pwm<0){
+			pwm = 0;
 		}
+		MotorSet(wheel->motor,(uint8_t)pwm,wheel->direction);
+
+		data = (uint8_t) current_speed;
+		SendByte_Uart_Ftdi(&data);
+		data = (uint8_t) average_speed;
+		SendByte_Uart_Ftdi(&data);
+		data = (uint8_t) pwm;
+		SendByte_Uart_Ftdi(&data);
+
+		taskEXIT_CRITICAL();
+
 		vTaskDelay(20/ portTICK_PERIOD_MS);
 	}
 }
@@ -396,7 +412,7 @@ void WheelOdometer(void *parametros){
 	while(1){
 
 		xEventGroupWaitBits( carEvents,FLAG_CAR_RUNNING, pdFALSE, pdFALSE,portMAX_DELAY);
-
+		xSemaphoreTake( xSemaphoreCarAvailable, portMAX_DELAY );
 		if(EncoderGetDistance(wheel->encoder) > (wheel->distance_to_reach)){
 			if( xSemaphoreTake( wheel->semphr, portMAX_DELAY ) == pdTRUE ){
 				EncoderOdomToZero(wheel->encoder);
@@ -431,7 +447,10 @@ void GPIO0_IRQHandler(){
 	uint32ToASCII((uint32_t)wheelR.speed,data);
 	SendString_Uart_Ftdi(data);
 	SendString_Uart_Ftdi(" cm/s \n");
+
 */
+
+
 	Led_Toggle(GREEN_LED);
 
 	Chip_PININT_ClearIntStatus(LPC_GPIO_PIN_INT,PININTCH(PIN_INT_0));
@@ -528,9 +547,9 @@ int main(void) {
    xTaskCreate(Teclado, "Teclado", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
    xTaskCreate(Director, "MainDirector", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1,NULL);
    xTaskCreate(WheelSpeedControl, "SpeedCtrlR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 1, NULL);
-   xTaskCreate(WheelSpeedControl, "SpeedCtrlL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL);
+   //xTaskCreate(WheelSpeedControl, "SpeedCtrlL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL);
    xTaskCreate(WheelOdometer, "OdometerR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 1, NULL);
-   xTaskCreate(WheelOdometer, "OdometerL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL );
+   //xTaskCreate(WheelOdometer, "OdometerL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL );
 
 
    SisTick_Init();
