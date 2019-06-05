@@ -33,21 +33,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/** @file blinking.c
+/** @file main.c
  **
- ** @brief Ejemplo de un led parpadeando
+ ** @brief Aplicación que controla un robot difirencial (dos ruedas motorizadas + rueda giratoria)
+ **  que sigue intrucciones precargadas.
  **
- ** Ejemplo de un led parpadeando utilizando la capa de abstraccion de 
- ** hardware y sin sistemas operativos.
+ ** La aplicación realiza un control retroalimentado de velocidad de cada rueda. La velocidad se
+ ** determina midiendo el tiempo entre dos interrupciones del encoder en un GPIO. La potencia entregada
+ ** a los motores se regula a través de una señal de PWM generada por hardware (SCTimer).
  ** 
- ** | RV | YYYY.MM.DD | Autor       | Descripción de los cambios              |
- ** |----|------------|-------------|-----------------------------------------|
- ** |  2 | 2017.10.16 | evolentini  | Correción en el formato del archivo     |
- ** |  1 | 2017.09.21 | evolentini  | Version inicial del archivo             |
+ ** | RV | YYYY.MM.DD | Autor       	| Descripción de los cambios              |
+ ** |----|------------|-----------------|-----------------------------------------|
+ ** |  1 | 2019.06.04 | botello-escher  | Version inicial de la aplicación        |
  ** 
- ** @defgroup ejemplos Proyectos de ejemplo
- ** @brief Proyectos de ejemplo de la Especialización en Sistemas Embebidos
- ** @{ 
  */
 
 /* === Inclusiones de cabeceras ============================================ */
@@ -69,11 +67,10 @@
 
 /* === Definicion y Macros ================================================= */
 
-#define PIN_INT_0 0
-#define PIN_INT_1 1
-#define TIMER0 0
-//#define NUMERO_INSTRUCCIONES 	10
-#define K 						0.
+#define PIN_INT_0 		0  	/*!< Interrupción encoder derecho*/
+#define PIN_INT_1 		1  	/*!< Interrupción encoder izquierdo*/
+#define TIMER0 			0 	/*!< Timer para encoders*/
+
 
 #define EV_REACHED_R			(1<<0)
 #define EV_REACHED_L 			(1<<1)
@@ -92,7 +89,6 @@ typedef struct {
 	uint8_t speed;
 	uint32_t distance_to_reach;
 	dir_t direction;
-	uint32_t ev_rst_odo;
 	uint32_t ev_distance_reached;
 	SemaphoreHandle_t semphr;
 }wheel_t;
@@ -105,27 +101,12 @@ typedef struct {
 	command_t command;
 	uint8_t speed;
 	uint32_t distance;
-	uint16_t angle;
-
+	uint16_t angle; //TODO: funcion de conversión ángulo -> distancia
 }instruction_t;
 
 
 
 /* === Declaraciones de funciones internas ================================= */
-
-/** @brief Función que implementa una tarea de baliza
- **
- ** @parameter[in] parametros Puntero a una estructura que contiene el led
- **                           y la demora entre encendido y apagado.
- */
-void Blinking(void * parametros);
-
-
-
-/***COMPLETAR TODO***/
-
-
-
 
 /* === Definiciones de variables internas ================================== */
 
@@ -138,33 +119,18 @@ wheel_t wheelR; /* Right Motor + Right Encoder	*/
 
 EventGroupHandle_t carEvents;
 
-uint8_t pwmBiasLUT[] = {
-		13,  /* 0 */
-		14,  /* 1 */
-		16,  /* 2 */
-		19,  /* 3 */
-	    24,	 /* 4 */
-	    34,	 /* 5 */
-	    45,  /* 6 */
-		70,  /* 7 */
-		100,  /* 8 */
-		100   /* 9 */
-};
-
-
-
-#define TURN_SPEED 20
-#define LINEAR_SPEED 20
+#define TURN_SPEED 15
+#define LINEAR_SPEED 25
 
 instruction_t instructionList[]={
-	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=5000	, .angle=0},
-	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
 	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
-	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
+	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=9	, .angle=0},
 	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
-	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
+	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=9	, .angle=0},
 	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
-	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=12	, .angle=0},
+	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=9	, .angle=0},
+	{.command=ADELANTE	, .speed=LINEAR_SPEED	, .distance=50	, .angle=0},
+	{.command=GIRO_H	, .speed=TURN_SPEED		, .distance=9	, .angle=0},
 
 
 };
@@ -276,11 +242,11 @@ void Director(void *parametros){
 				xEventGroupSetBits(carEvents, EV_NEXT_INSTRUCTION|FLAG_CAR_RUNNING);
 			}
 
-		}else if((evBits & (EV_STOP|EV_RESET)) != 0){ // OR
+		}else if((evBits & (EV_STOP|EV_RESET)) != 0){ // STOP OR RESET
 			carStop();
 			xEventGroupClearBits(carEvents, FLAG_CAR_RUNNING);
 			xSemaphoreGive( xSemaphoreCarAvailable );
-			if((evBits & EV_RESET) != 0)
+			if((evBits & EV_RESET) != 0) // ALSO IF RESET
 				instructionIndex = 0;
 
 		}else if( ( evBits & (EV_REACHED_R|EV_REACHED_L )) != 0 ){
@@ -289,7 +255,7 @@ void Director(void *parametros){
 			else
 				leftWheelReachGoal = TRUE;
 
-			if(rightWheelReachGoal == TRUE && leftWheelReachGoal == TRUE){
+			if(rightWheelReachGoal == TRUE && leftWheelReachGoal == TRUE){ // BOTH REACHED THE GOAL DISTANCE
 				xEventGroupSetBits(carEvents, EV_NEXT_INSTRUCTION);
 				leftWheelReachGoal = FALSE;
 				rightWheelReachGoal = FALSE;
@@ -308,7 +274,7 @@ void Director(void *parametros){
 				uint32_t distanciaActual=instructionList[instructionIndex].distance;
 				uint16_t angleActual=instructionList[instructionIndex].angle;
 				instructionIndex++;
-				taskENTER_CRITICAL();
+				taskENTER_CRITICAL();  // NEXT LINES MUST RUN AT ONCE
 				switch( cmdActual ){
 				case ADELANTE:
 					/* Se recibe el msj de sin comando. */
@@ -340,8 +306,8 @@ void Director(void *parametros){
 				setOdo(&wheelR,distanciaActual);
 				setOdo(&wheelL,distanciaActual);
 
-				xSemaphoreGive( xSemaphoreL );
-				xSemaphoreGive( xSemaphoreR );
+				xSemaphoreGive( xSemaphoreL ); // NOW LEFT WHEEL HAS AN INSTRUCTION. ODO CAN START COMPARING
+				xSemaphoreGive( xSemaphoreR ); // NOW RIGHT WHEEL HAS AN INSTRUCTION. ODO CAN START COMPARING
 				taskEXIT_CRITICAL();
 			}else{
 				carStop();
@@ -356,8 +322,8 @@ void Director(void *parametros){
 }
 
 #define kP 0.01
-#define kI 0.030
-#define kD 0.005
+#define kI 0.01
+#define kD 0.01
 
 void WheelSpeedControl(void * parametros){
 	wheel_t * wheel = parametros;
@@ -370,7 +336,14 @@ void WheelSpeedControl(void * parametros){
 		xEventGroupWaitBits( carEvents,FLAG_CAR_RUNNING, pdFALSE, pdFALSE, portMAX_DELAY);
 
 		target_speed = (float) wheel->speed;
+		if(target_speed==0){
+			integral = 0;
+		}
+
 		current_speed = EncoderGetSpeed(wheel->encoder);
+		if (current_speed>100){
+			current_speed=100;
+		}
 
 		average_speed = (current_speed + last1 + last2 + last3)/4;
 		last3 = last2;
@@ -380,6 +353,9 @@ void WheelSpeedControl(void * parametros){
 		//error =  target_speed - current_speed;
 		error =  target_speed - average_speed;
 		integral = error + integral;
+		if(integral<0){
+			integral=0;
+		}
 		derivative = error - last_error;
 
 		last_error = error;
@@ -391,15 +367,17 @@ void WheelSpeedControl(void * parametros){
 		}else if(pwm<0){
 			pwm = 0;
 		}
-		MotorSet(wheel->motor,(uint8_t)pwm,wheel->direction);
 
+
+		MotorSet(wheel->motor,(uint8_t)pwm,wheel->direction);
+		/* To make the graphics with serialplot. Use with one wheel task
 		data = (uint8_t) current_speed;
 		SendByte_Uart_Ftdi(&data);
 		data = (uint8_t) average_speed;
 		SendByte_Uart_Ftdi(&data);
 		data = (uint8_t) pwm;
 		SendByte_Uart_Ftdi(&data);
-
+		*/
 		taskEXIT_CRITICAL();
 
 		vTaskDelay(20/ portTICK_PERIOD_MS);
@@ -412,10 +390,11 @@ void WheelOdometer(void *parametros){
 	while(1){
 
 		xEventGroupWaitBits( carEvents,FLAG_CAR_RUNNING, pdFALSE, pdFALSE,portMAX_DELAY);
-		xSemaphoreTake( xSemaphoreCarAvailable, portMAX_DELAY );
+
 		if(EncoderGetDistance(wheel->encoder) > (wheel->distance_to_reach)){
-			if( xSemaphoreTake( wheel->semphr, portMAX_DELAY ) == pdTRUE ){
 				EncoderOdomToZero(wheel->encoder);
+			if( xSemaphoreTake( wheel->semphr, portMAX_DELAY ) == pdTRUE ){ // ODO DISTANCE > DISTANCE_TO_REACH AND THERE IS AN INSTRUCTION TO COMPLETE
+				//EncoderOdomToZero(wheel->encoder);
 				xEventGroupSetBits(carEvents,wheel->ev_distance_reached);
 				MotorRst(wheel->motor);
 				wheel->speed = 0;
@@ -434,23 +413,8 @@ void WheelOdometer(void *parametros){
 /*ISR for GPIO0*/
 void GPIO0_IRQHandler(){
 	NVIC_DisableIRQ( PIN_INT0_IRQn);
+
 	EncoderUpdate(&encR);
-/*
-	uint8_t data[5];
-	uint32ToASCII((uint32_t)encR.distance,data);
-	SendString_Uart_Ftdi("Distance R: ");
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm | Speed R: ");
-	uint32ToASCII((uint32_t)encR.speed,data);
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm/s | Set speed R: ");
-	uint32ToASCII((uint32_t)wheelR.speed,data);
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm/s \n");
-
-*/
-
-
 	Led_Toggle(GREEN_LED);
 
 	Chip_PININT_ClearIntStatus(LPC_GPIO_PIN_INT,PININTCH(PIN_INT_0));
@@ -458,23 +422,11 @@ void GPIO0_IRQHandler(){
 	NVIC_EnableIRQ( PIN_INT0_IRQn);
 }
 
-
+/*ISR for GPIO1*/
 void GPIO1_IRQHandler(){
 	NVIC_DisableIRQ( PIN_INT1_IRQn);
+
 	EncoderUpdate(&encL);
-/*
-	uint8_t data[5];
-	uint32ToASCII((uint32_t)encL.distance,data);
-	SendString_Uart_Ftdi("Distance L: ");
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm | Speed L: ");
-	uint32ToASCII((uint32_t)encL.speed,data);
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm/s | Set speed L: ");
-	uint32ToASCII((uint32_t)wheelL.speed,data);
-	SendString_Uart_Ftdi(data);
-	SendString_Uart_Ftdi(" cm/s \n");
-/**/
 	Led_Toggle(RGB_B_LED);
 
 	Chip_PININT_ClearIntStatus(LPC_GPIO_PIN_INT,PININTCH(PIN_INT_1));
@@ -492,16 +444,6 @@ void WheelInit(wheel_t * wheel, optEnc_t *encoder, motor_t *motor, uint32_t ev_d
 	 wheel->speed = 0;
 	 wheel->distance_to_reach = 0;
 }
-
-
-
-
-
-
-
-
-
-
 
 
 /** @brief Función principal del programa
@@ -529,8 +471,6 @@ int main(void) {
    EncoderCfg(&encR,ENC_1,GPIO_1,PIN_INT_0);
    EncoderCfg(&encL,ENC_2,GPIO_2,PIN_INT_1);
 
-
-
    carEvents = xEventGroupCreate();
    xSemaphoreL = xSemaphoreCreateBinary();
    xSemaphoreR = xSemaphoreCreateBinary();
@@ -539,17 +479,15 @@ int main(void) {
    WheelInit(&wheelR, &encR, &motR,EV_REACHED_R,xSemaphoreR);
    WheelInit(&wheelL, &encL, &motL,EV_REACHED_L,xSemaphoreL);
 
-
-
    /* Creación de las tareas */
 
    xTaskCreate(Blinking, "Verde", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
    xTaskCreate(Teclado, "Teclado", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1, NULL);
-   xTaskCreate(Director, "MainDirector", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1,NULL);
-   xTaskCreate(WheelSpeedControl, "SpeedCtrlR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 1, NULL);
-   //xTaskCreate(WheelSpeedControl, "SpeedCtrlL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL);
-   xTaskCreate(WheelOdometer, "OdometerR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 1, NULL);
-   //xTaskCreate(WheelOdometer, "OdometerL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 1, NULL );
+   xTaskCreate(Director, "MainDirector", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 2,NULL);
+   xTaskCreate(WheelSpeedControl, "SpeedCtrlR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 3, NULL);
+   xTaskCreate(WheelSpeedControl, "SpeedCtrlL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 3, NULL);
+   xTaskCreate(WheelOdometer, "OdometerR", configMINIMAL_STACK_SIZE, &wheelR, tskIDLE_PRIORITY + 2, NULL);
+   xTaskCreate(WheelOdometer, "OdometerL", configMINIMAL_STACK_SIZE, &wheelL, tskIDLE_PRIORITY + 2, NULL );
 
 
    SisTick_Init();
