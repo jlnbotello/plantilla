@@ -12,9 +12,9 @@
 -Lectura de velocidad con encoders -> (TIMER + GPIO) -> ENC_OPTICO
 -Control de PWM y dirección -> TIMER SCT (PWM) + GPIO -> MOT_CTRL
 
-## Diagrama de capas y ensayos
+## Diagrama de capas, diagrama de secuencia y ensayos
 
-En carpeta doc
+En carpeta doc. Ver README.MD también
 
 ## Videos
 
